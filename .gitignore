@@ -1,0 +1,59 @@
+# 1. Бинарники и сборки
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+# Имя твоего скомпилированного бинарника (если собираешь в корень)
+jrn
+jrn.exe
+
+# 2. Тестовые отчеты и покрытие
+*.out
+*.test
+*.prof
+*.pprof
+coverage.txt
+coverage.html
+
+# 3. Зависимости (если не используешь vendoring явно)
+/vendor/
+
+# 4. Файлы окружения и секреты
+.env
+.env.*
+!.env.example
+
+# 5. IDE и редакторы кода
+# VS Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+# GoLand / JetBrains
+.idea/
+*.iml
+*.iws
+
+# Vim / Emacs
+*~
+*.swp
+*.swo
+.#*
+
+# 6. Мусор операционных систем
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 7. Локальные тестовые markdown-файлы (по желанию, если не хочешь пушить свои личные заметки)
+# 202*-*-*.md
