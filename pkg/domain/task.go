@@ -1,17 +1,16 @@
 package domain
 
 import (
-	"strconv"
 	"strings"
-	"time"
 )
 
+// TaskBuilder provides a fluent interface for constructing Task instances safely.
 type TaskBuilder struct {
 	task Task
 	err  error
 }
 
-// NewTask создает новый билдер для задачи с проверкой обязательного заголовка.
+// NewTask initializes a new TaskBuilder and validates that the title is not empty.
 func NewTask(title string) *TaskBuilder {
 	trimmed := strings.TrimSpace(title)
 	var err error
@@ -29,7 +28,7 @@ func NewTask(title string) *TaskBuilder {
 	}
 }
 
-// Tag добавляет один или несколько тегов к задаче.
+// Tag adds one or more tags to the task, trimming leading # and whitespace.
 func (b *TaskBuilder) Tag(tags ...string) *TaskBuilder {
 	if b.err != nil {
 		return b
@@ -43,7 +42,7 @@ func (b *TaskBuilder) Tag(tags ...string) *TaskBuilder {
 	return b
 }
 
-// Attr добавляет атрибут ключ-значение (например @prio(high), @due(2026-09-01)).
+// Attr adds a key-value attribute (e.g., @prio(high), @due(2026-09-01)).
 func (b *TaskBuilder) Attr(key, value string) *TaskBuilder {
 	if b.err != nil {
 		return b
@@ -56,7 +55,7 @@ func (b *TaskBuilder) Attr(key, value string) *TaskBuilder {
 	return b
 }
 
-// Note добавляет одну или несколько заметок к задаче.
+// Note appends one or more note lines to the task.
 func (b *TaskBuilder) Note(notes ...string) *TaskBuilder {
 	if b.err != nil {
 		return b
@@ -70,13 +69,13 @@ func (b *TaskBuilder) Note(notes ...string) *TaskBuilder {
 	return b
 }
 
-// Done устанавливает статус выполнения задачи.
+// Done sets the completion state of the task.
 func (b *TaskBuilder) Done(done bool) *TaskBuilder {
 	b.task.Done = done
 	return b
 }
 
-// Build валидирует и возвращает готовую задачу.
+// Build finalizes task creation and returns the constructed Task or an error.
 func (b *TaskBuilder) Build() (Task, error) {
 	if b.err != nil {
 		return Task{}, b.err
@@ -84,33 +83,29 @@ func (b *TaskBuilder) Build() (Task, error) {
 	return b.task, nil
 }
 
-// Matches проверяет, содержится ли поисковый запрос в заголовке, заметках, тегах или атрибутах задачи.
+// Matches checks if the task matches the search query across title, notes, tags, or attributes.
 func (t *Task) Matches(query string) bool {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return false
 	}
 
-	// 1. Поиск в заголовке
 	if strings.Contains(strings.ToLower(t.Title), q) {
 		return true
 	}
 
-	// 2. Поиск в заметках
 	for _, note := range t.Notes {
 		if strings.Contains(strings.ToLower(note), q) {
 			return true
 		}
 	}
 
-	// 3. Поиск в тегах
 	for _, tag := range t.Tags {
 		if strings.Contains(strings.ToLower(tag), q) {
 			return true
 		}
 	}
 
-	// 4. Поиск в атрибутах
 	for _, attr := range t.Attributes {
 		if strings.Contains(strings.ToLower(attr.Key), q) ||
 			strings.Contains(strings.ToLower(attr.Value), q) {
@@ -121,7 +116,7 @@ func (t *Task) Matches(query string) bool {
 	return false
 }
 
-// HasTag проверяет наличие указанного тега у задачи (регистронезависимо).
+// HasTag checks if the task has the specified tag (case-insensitive, ignoring optional # prefix).
 func (t *Task) HasTag(tag string) bool {
 	target := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(tag)), "#")
 	for _, cur := range t.Tags {
@@ -132,7 +127,7 @@ func (t *Task) HasTag(tag string) bool {
 	return false
 }
 
-// AttrVal возвращает значение атрибута по ключу и флаг успешности поиска.
+// AttrVal returns the value of the attribute for the given key and true if found.
 func (t *Task) AttrVal(key string) (string, bool) {
 	target := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(key)), "@")
 	for _, attr := range t.Attributes {
@@ -143,62 +138,7 @@ func (t *Task) AttrVal(key string) (string, bool) {
 	return "", false
 }
 
-func (t *Task) ShouldRepeatOn(date time.Time) bool {
-	rule, found := t.AttrVal("repeat")
-	if !found {
-		return false
-	}
-
-	rule = strings.ToLower(strings.TrimSpace(rule))
-
-	//Ежедневно
-	if rule == "daily" {
-		return true
-	}
-
-	//По дням недели (например, "mon,wed,fri")
-	if strings.HasPrefix(rule, "weekly:") {
-		daysStr := strings.TrimPrefix(rule, "weekly:")
-		targetDay := shortWeekday(date.Weekday()) // "mon", "tue", etc.
-		for _, day := range strings.Split(daysStr, ",") {
-			if strings.TrimSpace(day) == targetDay {
-				return true
-			}
-		}
-		return false
-	}
-
-	//Чётные / Нечётные недели (числитель / знаменатель): biweekly:even:tue или biweekly:odd:mon
-	if strings.HasPrefix(rule, "biweekly:") {
-		parts := strings.Split(strings.TrimPrefix(rule, "biweekly:"), ":")
-		if len(parts) != 2 {
-			return false
-		}
-		parity, day := parts[0], parts[1] // "even"/"odd", "tue"
-
-		_, weekNum := date.ISOWeek()
-		isEvenWeek := weekNum%2 == 0
-
-		if (parity == "even" && !isEvenWeek) || (parity == "odd" && isEvenWeek) {
-			return false
-		}
-
-		return shortWeekday(date.Weekday()) == day
-	}
-
-	//Ежемесячно (например, "monthly:15" для 15-го числа каждого месяца)
-	if strings.HasPrefix(rule, "monthly:") {
-		dayStr := strings.TrimPrefix(rule, "monthly:")
-		dayNum, err := strconv.Atoi(dayStr)
-		if err != nil || dayNum < 1 || dayNum > 31 {
-			return false
-		}
-		return date.Day() == dayNum
-	}
-
-	return false
-}
-
+// Clone creates a deep copy of the task and its slices to ensure memory safety during rollover.
 func (t *Task) Clone() Task {
 	return Task{
 		Done:       t.Done,
@@ -206,26 +146,5 @@ func (t *Task) Clone() Task {
 		Tags:       append([]string(nil), t.Tags...),
 		Attributes: append([]Attribute(nil), t.Attributes...),
 		Notes:      append([]string(nil), t.Notes...),
-	}
-}
-
-func shortWeekday(wd time.Weekday) string {
-	switch wd {
-	case time.Monday:
-		return "mon"
-	case time.Tuesday:
-		return "tue"
-	case time.Wednesday:
-		return "wed"
-	case time.Thursday:
-		return "thu"
-	case time.Friday:
-		return "fri"
-	case time.Saturday:
-		return "sat"
-	case time.Sunday:
-		return "sun"
-	default:
-		return ""
 	}
 }

@@ -258,3 +258,25 @@ func (d *Document) OverdueTasks(today time.Time) []Task {
 	}
 	return result
 }
+
+// TasksByUrgency возвращает копию задач документа, отсортированных по убыванию срочности.
+func (d *Document) TasksByUrgency(now time.Time, cfg ...UrgencyConfig) []Task {
+	result := make([]Task, len(d.Tasks))
+	copy(result, d.Tasks)
+
+	slices.SortStableFunc(result, func(a, b Task) int {
+		urgA := a.Urgency(now, cfg...)
+		urgB := b.Urgency(now, cfg...)
+
+		if urgA > urgB {
+			return -1
+		}
+		if urgA < urgB {
+			return 1
+		}
+		return 0
+	})
+
+	return result
+}
+

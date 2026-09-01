@@ -303,3 +303,71 @@ func TestDocument_Search_And_Filter(t *testing.T) {
 		t.Errorf("OverdueTasks = %v", overdue)
 	}
 }
+
+func TestTask_Urgency(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+
+	// 1. Выполненная задача -> 0.0
+	doneTask := Task{Title: "Сделано", Done: true}
+	if urg := doneTask.Urgency(now); urg != 0.0 {
+		t.Errorf("Done task urgency = %v, хотели 0.0", urg)
+	}
+
+	// 2. Базовая незавершенная задача -> 1.0
+	baseTask := Task{Title: "Обычная задача", Done: false}
+	if urg := baseTask.Urgency(now); urg != 1.0 {
+		t.Errorf("Base task urgency = %v, хотели 1.0", urg)
+	}
+
+	// 3. Задача с дедлайном сегодня и высоким приоритетом: 1.0 + 10.0 (due today) + 4.0 (prio high) = 15.0
+	urgentTask := Task{
+		Title: "Горящий отчет",
+		Attributes: []Attribute{
+			{Key: "due", Value: "2026-09-01"},
+			{Key: "prio", Value: "high"},
+		},
+	}
+	if urg := urgentTask.Urgency(now); urg != 15.0 {
+		t.Errorf("Urgent task urgency = %v, хотели 15.0", urg)
+	}
+
+	// 4. Просроченная задача: 1.0 + 12.0 (overdue) = 13.0
+	overdueTask := Task{
+		Title: "Просроченная задача",
+		Attributes: []Attribute{
+			{Key: "due", Value: "2026-08-30"},
+		},
+	}
+	if urg := overdueTask.Urgency(now); urg != 13.0 {
+		t.Errorf("Overdue task urgency = %v, хотели 13.0", urg)
+	}
+}
+
+func TestDocument_TasksByUrgency(t *testing.T) {
+	now := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+
+	doc := &Document{
+		Tasks: []Task{
+			{Title: "Низкий приоритет", Attributes: []Attribute{{Key: "prio", Value: "low"}}},           // 1.5
+			{Title: "Выполненная задача", Done: true, Attributes: []Attribute{{Key: "prio", Value: "high"}}}, // 0.0
+			{Title: "Дедлайн сегодня", Attributes: []Attribute{{Key: "due", Value: "2026-09-01"}}},       // 11.0
+			{Title: "Просрочено критично", Attributes: []Attribute{{Key: "due", Value: "2026-08-31"}, {Key: "prio", Value: "high"}}}, // 17.0
+		},
+	}
+
+	sorted := doc.TasksByUrgency(now)
+
+	expectedOrder := []string{
+		"Просрочено критично",
+		"Дедлайн сегодня",
+		"Низкий приоритет",
+		"Выполненная задача",
+	}
+
+	for i, exp := range expectedOrder {
+		if sorted[i].Title != exp {
+			t.Errorf("позиция %d: получили %q, ожидали %q", i, sorted[i].Title, exp)
+		}
+	}
+}
+
