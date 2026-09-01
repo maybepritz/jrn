@@ -1,29 +1,37 @@
 package main
 
 import (
+	"context"
 	"fmt"
-	"os"
-
-	"jrn/internal/parser"
-	"jrn/internal/ui"
-
-	tea "github.com/charmbracelet/bubbletea"
+	"jrn/internal/infrastructure/storage"
+	"path/filepath"
+	"time"
 )
 
 func main() {
-	doc, err := parser.ParseMarkdown("2026-08-25.md")
+	ctx := context.Background()
+
+	// 1. Хранилище
+	storage, err := storage.New(filepath.Join(".", "data"))
 	if err != nil {
-		fmt.Printf("Ошибка парсинга: %v\n", err)
-		os.Exit(1)
+		panic(err)
 	}
 
-	p := tea.NewProgram(
-		ui.InitialModel(doc),
-		tea.WithAltScreen(),
-		tea.WithMouseCellMotion(),
-	)
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Ошибка при запуске TUI: %v\n", err)
-		os.Exit(1)
+	date, find, err := storage.FindNextDate(ctx, time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		panic(err)
 	}
+
+	fmt.Printf("Previous date: %s, found: %v\n", date.Format("2006-01-02"), find)
+
+	// 2. Движок
+	// engine := app.New(storage)
+
+	// // 3. Открываем сегодняшний день
+	// doc, err := engine.OpenToday(ctx)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// fmt.Printf("День: %s | Серия: %d дней | Задач: %d\n", doc.Meta.Date, doc.Meta.Streak, len(doc.Tasks))
 }
