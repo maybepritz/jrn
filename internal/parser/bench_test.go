@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"jrn/internal/domain"
+	"jrn/pkg/domain"
 	"testing"
 )
 
@@ -60,3 +60,39 @@ func BenchmarkRoundTrip(b *testing.B) {
 		}
 	}
 }
+
+var benchJsonData = SerializeJson(benchDoc)
+
+func BenchmarkParseJson(b *testing.B) {
+	b.ReportAllocs()
+	b.SetBytes(int64(len(benchJsonData)))
+
+	for b.Loop() {
+		_, err := ParseJson(benchJsonData)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkSerializeJson(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = SerializeJson(benchDoc)
+	}
+}
+
+func BenchmarkRoundTripJson(b *testing.B) {
+	b.ReportAllocs()
+
+	for b.Loop() {
+		data := SerializeJson(benchDoc)
+		_, err := ParseJson(data)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+

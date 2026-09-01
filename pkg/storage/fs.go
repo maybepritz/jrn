@@ -3,9 +3,12 @@ package storage
 import (
 	"context"
 	"errors"
-	"jrn/internal/domain"
+	"fmt"
+	"jrn/pkg/domain"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -15,10 +18,15 @@ type FS struct {
 
 // store, err := storage.New("~/.jrn")
 func New(dir string) (*FS, error) {
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	expandedDir, err := expandHome(dir)
+	if err != nil {
 		return nil, err
 	}
-	return &FS{dir: dir}, nil
+
+	if err := os.MkdirAll(expandedDir, 0755); err != nil {
+		return nil, err
+	}
+	return &FS{dir: expandedDir}, nil
 }
 
 // err := store.Save(ctx, date, markdownBytes)
@@ -203,31 +211,35 @@ func (s *FS) FindNextDate(ctx context.Context, after time.Time) (time.Time, bool
 	return time.Time{}, false, nil
 }
 
-func (s *FS) ListDates(ctx context.Context, date time.Time) ([]time.Time, error) {
+func (s *FS) ListDates(ctx context.Context) ([]time.Time, error) {
 	var dates []time.Time
+
 	years, err := os.ReadDir(s.dir)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
 	for _, year := range years {
-		if !year.IsDir() {
+		if !year.IsDir() || len(year.Name()) != 4 {
 			continue
 		}
 
 		months, err := os.ReadDir(filepath.Join(s.dir, year.Name()))
 		if err != nil {
-			return nil, err
+			continue
 		}
 
 		for _, month := range months {
-			if !month.IsDir() {
+			if !month.IsDir() || len(month.Name()) != 2 {
 				continue
 			}
 
 			days, err := os.ReadDir(filepath.Join(s.dir, year.Name(), month.Name()))
 			if err != nil {
-				return nil, err
+				continue
 			}
 
 			for _, day := range days {
@@ -236,15 +248,11 @@ func (s *FS) ListDates(ctx context.Context, date time.Time) ([]time.Time, error)
 				}
 				filename := day.Name()
 
-				if len(filename) < 13 || filename[10:] != ".md" {
+				if len(filename) != 13 || filename[10:] != ".md" {
 					continue
 				}
 
 				if !isValidDateStr(filename[:10]) {
-					continue
-				}
-
-				if day.Name() >= date.Format("2006-01-02")+".md" {
 					continue
 				}
 
@@ -256,6 +264,10 @@ func (s *FS) ListDates(ctx context.Context, date time.Time) ([]time.Time, error)
 			}
 		}
 	}
+
+	slices.SortFunc(dates, func(a, b time.Time) int {
+		return a.Compare(b)
+	})
 
 	return dates, nil
 }
@@ -289,3 +301,19 @@ func (s *FS) datePath(date time.Time) string {
 	filename := date.Format("2006-01-02") + ".md"
 	return filepath.Join(s.dir, year, month, filename)
 }
+
+func expandHome(path string) (string, error) {
+	if path == "~" {
+		return os.UserHomeDir()
+	}
+
+	if strings.HasPrefix(path, "~/") || strings.HasPrefix(path, `~\`) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("не удалось получить домашнюю директорию: %w", err)
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
+}
+

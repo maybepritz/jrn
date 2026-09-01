@@ -1,9 +1,14 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
-	"jrn/internal/domain"
+	"jrn/pkg/domain"
+
+	"github.com/valyala/fastjson"
 )
+
+var pool fastjson.ParserPool
 
 type State uint8
 
@@ -11,8 +16,6 @@ type Parser struct {
 	state State
 	doc   domain.Document
 
-	// Буферы
-	buf         []byte
 	streakValue int
 	taskValue   int
 
@@ -101,17 +104,19 @@ const (
 )
 
 func Parse(data []byte) (*domain.Document, error) {
+	src := string(data)
 
 	p := Parser{
 		state: START,
-		buf:   make([]byte, 0, 128), // Предвыделяем буфер под строки
 	}
 
 	p.doc.Tasks = make([]domain.Task, 0, 16)
 	p.doc.DailyLog = make([]string, 0, 8)
 
-	for i := 0; i < len(data); i++ {
-		ch := data[i]
+	var tokenStart int
+
+	for i := 0; i < len(src); i++ {
+		ch := src[i]
 
 		switch p.state {
 		case START:
@@ -187,18 +192,16 @@ func Parse(data []byte) (*domain.Document, error) {
 			} else if ch == '\n' {
 				return nil, p.syntaxError("ожидалось значение после ключа 'date'", ch, i)
 			} else if isDigit(ch) {
-				p.buf = append(p.buf, ch)
+				tokenStart = i
 				p.state = READ_DATE
 			} else {
 				return nil, p.syntaxError("ожидалось значение после ключа 'date'", ch, i)
 			}
 		case READ_DATE:
 			if ch == '\n' || ch == '\r' {
-				p.doc.Meta.Date = string(p.buf)
-				p.buf = p.buf[:0]
+				p.doc.Meta.Date = trimSlice(src, tokenStart, i)
 				p.state = IN_FRONTMATTER
 			} else if isDigit(ch) || ch == '-' {
-				p.buf = append(p.buf, ch)
 			} else {
 				return nil, p.syntaxError("ожидалось значение после ключа 'date'", ch, i)
 			}
@@ -506,6 +509,7 @@ func Parse(data []byte) (*domain.Document, error) {
 			}
 		case SEEN_HEAD_DAILY_LOG:
 			if ch == '\n' {
+				tokenStart = i + 1
 				p.state = IN_DAILY_LOG
 			} else if ch == ' ' || ch == '\t' {
 				// Игнорируем пробелы после 'Daily Log'
@@ -534,20 +538,18 @@ func Parse(data []byte) (*domain.Document, error) {
 			}
 		case NOTE_SEEN_DASH:
 			if ch == ' ' || ch == '\t' {
-				p.buf = p.buf[:0] // Очищаем буфер перед сбором текста заметки
+				tokenStart = i + 1
 				p.state = READ_NOTE_TEXT
 			} else {
 				return nil, p.syntaxError("ожидался пробел после '-' в заметке", ch, i)
 			}
 		case READ_NOTE_TEXT:
 			if ch == '\n' || ch == '\r' {
-				if len(p.buf) > 0 {
-					p.curTask.Notes = append(p.curTask.Notes, trimTrailingSpaces(string(p.buf)))
-					p.buf = p.buf[:0]
+				note := trimSlice(src, tokenStart, i)
+				if len(note) > 0 {
+					p.curTask.Notes = append(p.curTask.Notes, note)
 				}
 				p.state = IN_TASKS
-			} else {
-				p.buf = append(p.buf, ch)
 			}
 		case TASK_DASH:
 			if ch == ' ' {
@@ -583,55 +585,49 @@ func Parse(data []byte) (*domain.Document, error) {
 			}
 		case TASK_RBRACKET:
 			if ch == ' ' {
-				//тут можно очистить буфер ес чоу
+				tokenStart = i + 1
 				p.state = READ_TASK_TEXT
 			} else {
 				return nil, p.syntaxError("ожидался пробел после чекбокса", ch, i)
 			}
 		case READ_TASK_TEXT:
 			if ch == '\n' || ch == '\r' {
-				p.curTask.Title = trimTrailingSpaces(string(p.buf))
-				p.buf = p.buf[:0]
+				p.curTask.Title = trimSlice(src, tokenStart, i)
 				p.state = IN_TASKS
 			} else if ch == '#' {
 				if p.curTask.Title == "" {
-					p.curTask.Title = trimTrailingSpaces(string(p.buf))
+					p.curTask.Title = trimSlice(src, tokenStart, i)
 				}
-				p.buf = p.buf[:0]
+				tokenStart = i + 1
 				p.state = READ_TASK_TAG
 			} else if ch == '@' {
 				if p.curTask.Title == "" {
-					p.curTask.Title = trimTrailingSpaces(string(p.buf))
+					p.curTask.Title = trimSlice(src, tokenStart, i)
 				}
-				p.buf = p.buf[:0]
+				tokenStart = i + 1
 				p.state = READ_ATTR_KEY
-			} else {
-				p.buf = append(p.buf, ch)
 			}
 		case READ_TASK_TAG:
 			if ch == ' ' || ch == '\t' {
-				if len(p.buf) > 0 {
-					p.curTask.Tags = append(p.curTask.Tags, string(p.buf))
-					p.buf = p.buf[:0]
+				tag := trimSlice(src, tokenStart, i)
+				if len(tag) > 0 {
+					p.curTask.Tags = append(p.curTask.Tags, internString(tag))
 				}
 				p.state = READ_TASK_TAG_WAIT_NEXT
 			} else if ch == '\n' || ch == '\r' {
-				if len(p.buf) > 0 {
-					p.curTask.Tags = append(p.curTask.Tags, string(p.buf))
-					p.buf = p.buf[:0]
+				tag := trimSlice(src, tokenStart, i)
+				if len(tag) > 0 {
+					p.curTask.Tags = append(p.curTask.Tags, internString(tag))
 				}
 				p.state = IN_TASKS
-			} else {
-				p.buf = append(p.buf, ch)
 			}
 		case READ_TASK_TAG_WAIT_NEXT:
 			if ch == ' ' || ch == '\t' {
-
 			} else if ch == '#' {
-				p.buf = p.buf[:0]
+				tokenStart = i + 1
 				p.state = READ_TASK_TAG
 			} else if ch == '@' {
-				p.buf = p.buf[:0]
+				tokenStart = i + 1
 				p.state = READ_ATTR_KEY
 			} else if ch == '\n' || ch == '\r' {
 				p.state = IN_TASKS
@@ -640,35 +636,29 @@ func Parse(data []byte) (*domain.Document, error) {
 			}
 		case READ_ATTR_KEY:
 			if ch == '(' {
-				p.attrKey = string(p.buf)
-				p.buf = p.buf[:0]
+				p.attrKey = internString(trimSlice(src, tokenStart, i))
+				tokenStart = i + 1
 				p.state = READ_ATTR_VAL
 			} else if ch == ' ' || ch == '\t' || ch == '\n' {
 				return nil, p.syntaxError("ожидалась открывающая скобка '(' после ключа атрибута", ch, i)
-			} else {
-				p.buf = append(p.buf, ch)
 			}
 		case READ_ATTR_VAL:
 			if ch == ')' {
 				p.curTask.Attributes = append(p.curTask.Attributes, domain.Attribute{
 					Key:   p.attrKey,
-					Value: string(p.buf),
+					Value: internString(trimSlice(src, tokenStart, i)),
 				})
-				p.buf = p.buf[:0]
-				// p.attrKey = ""
 				p.state = READ_ATTR_WAIT_SPACE
 			} else if ch == '\n' {
 				return nil, p.syntaxError("ожидалась закрывающая скобка ')' для значения атрибута", ch, i)
-			} else {
-				p.buf = append(p.buf, ch)
 			}
 		case READ_ATTR_WAIT_SPACE:
 			if ch == ' ' || ch == '\t' {
 			} else if ch == '#' {
-				p.buf = p.buf[:0]
+				tokenStart = i + 1
 				p.state = READ_TASK_TAG
 			} else if ch == '@' {
-				p.buf = p.buf[:0]
+				tokenStart = i + 1
 				p.state = READ_ATTR_KEY
 			} else if ch == '\n' || ch == '\r' {
 				p.state = IN_TASKS
@@ -677,29 +667,38 @@ func Parse(data []byte) (*domain.Document, error) {
 			}
 		case IN_DAILY_LOG:
 			if ch == '#' {
-				if len(p.buf) > 0 {
-					p.doc.DailyLog = append(p.doc.DailyLog, string(p.buf))
-					p.buf = p.buf[:0]
+				line := trimSlice(src, tokenStart, i)
+				if len(line) > 0 {
+					p.doc.DailyLog = append(p.doc.DailyLog, line)
 				}
 				p.state = SEEN_H1
 			} else if ch == '\n' {
-				if len(p.buf) > 0 {
-					p.doc.DailyLog = append(p.doc.DailyLog, string(p.buf))
-					p.buf = p.buf[:0]
+				line := trimSlice(src, tokenStart, i)
+				if len(line) > 0 {
+					p.doc.DailyLog = append(p.doc.DailyLog, line)
 				}
-			} else {
-				p.buf = append(p.buf, ch)
+				tokenStart = i + 1
 			}
 		}
 	}
+
 	if p.state == READ_TASK_TEXT && p.hasTask {
-		p.curTask.Title = trimTrailingSpaces(string(p.buf))
-	} else if p.state == READ_TASK_TAG && len(p.buf) > 0 {
-		p.curTask.Tags = append(p.curTask.Tags, string(p.buf))
-	} else if p.state == READ_NOTE_TEXT && len(p.buf) > 0 {
-		p.curTask.Notes = append(p.curTask.Notes, trimTrailingSpaces(string(p.buf)))
-	} else if p.state == IN_DAILY_LOG && len(p.buf) > 0 {
-		p.doc.DailyLog = append(p.doc.DailyLog, trimTrailingSpaces(string(p.buf)))
+		p.curTask.Title = trimSlice(src, tokenStart, len(src))
+	} else if p.state == READ_TASK_TAG && len(src) > tokenStart {
+		tag := trimSlice(src, tokenStart, len(src))
+		if len(tag) > 0 {
+			p.curTask.Tags = append(p.curTask.Tags, internString(tag))
+		}
+	} else if p.state == READ_NOTE_TEXT && len(src) > tokenStart {
+		note := trimSlice(src, tokenStart, len(src))
+		if len(note) > 0 {
+			p.curTask.Notes = append(p.curTask.Notes, note)
+		}
+	} else if p.state == IN_DAILY_LOG && len(src) > tokenStart {
+		log := trimSlice(src, tokenStart, len(src))
+		if len(log) > 0 {
+			p.doc.DailyLog = append(p.doc.DailyLog, log)
+		}
 	}
 
 	p.saveCurrentTask()
@@ -712,9 +711,146 @@ func Parse(data []byte) (*domain.Document, error) {
 	}
 }
 
+func ParseJson(data []byte) (*domain.Document, error) {
+	p := pool.Get()
+	defer pool.Put(p)
+
+	v, err := p.ParseBytes(data)
+	if err != nil {
+		return nil, fmt.Errorf("синтаксическая ошибка JSON: %w", err)
+	}
+
+	doc := &domain.Document{}
+
+	metaVal := v.Get("meta")
+	if metaVal == nil {
+		return nil, errors.New("пропущен обязательный блок 'meta'")
+	}
+
+	doc.Meta = domain.Metadata{
+		Date:          internBytes(metaVal.GetStringBytes("date")),
+		Streak:        metaVal.GetInt("streak"),
+		TaskCompleted: metaVal.GetInt("task_completed"),
+	}
+
+	if doc.Meta.Date == "" {
+		return nil, errors.New("в блоке 'meta' отсутствует поле 'date'")
+	}
+
+	logArr := v.GetArray("daily_log")
+	doc.DailyLog = make([]string, 0, len(logArr))
+	for _, item := range logArr {
+		doc.DailyLog = append(doc.DailyLog, string(item.GetStringBytes()))
+	}
+
+	taskArr := v.GetArray("tasks")
+	doc.Tasks = make([]domain.Task, 0, len(taskArr))
+	for _, t := range taskArr {
+		tagsArr := t.GetArray("tags")
+		attrsArr := t.GetArray("attributes")
+		notesArr := t.GetArray("notes")
+
+		task := domain.Task{
+			Done:       t.GetBool("done"),
+			Title:      string(t.GetStringBytes("title")),
+			Tags:       make([]string, 0, len(tagsArr)),
+			Attributes: make([]domain.Attribute, 0, len(attrsArr)),
+			Notes:      make([]string, 0, len(notesArr)),
+		}
+
+		if task.Title == "" {
+			return nil, domain.ErrEmptyTitle
+		}
+
+		for _, tag := range tagsArr {
+			task.Tags = append(task.Tags, internBytes(tag.GetStringBytes()))
+		}
+		for _, attr := range attrsArr {
+			task.Attributes = append(task.Attributes, domain.Attribute{
+				Key:   internBytes(attr.GetStringBytes("key")),
+				Value: internBytes(attr.GetStringBytes("value")),
+			})
+		}
+		for _, note := range notesArr {
+			task.Notes = append(task.Notes, string(note.GetStringBytes()))
+		}
+		doc.Tasks = append(doc.Tasks, task)
+	}
+	return doc, nil
+}
+
+func internString(s string) string {
+	switch s {
+	case "prio":
+		return "prio"
+	case "due":
+		return "due"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "dev":
+		return "dev"
+	case "go":
+		return "go"
+	case "study":
+		return "study"
+	case "home":
+		return "home"
+	case "habit":
+		return "habit"
+	case "health":
+		return "health"
+	case "backup":
+		return "backup"
+	case "reading":
+		return "reading"
+	default:
+		return s
+	}
+}
+
+func internBytes(b []byte) string {
+	switch string(b) { // Оптимизация gc: 0 аллокаций при поиске
+	case "prio":
+		return "prio"
+	case "due":
+		return "due"
+	case "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "dev":
+		return "dev"
+	case "go":
+		return "go"
+	case "study":
+		return "study"
+	case "home":
+		return "home"
+	case "habit":
+		return "habit"
+	case "health":
+		return "health"
+	case "backup":
+		return "backup"
+	case "reading":
+		return "reading"
+	default:
+		return string(b)
+	}
+}
+
+// TODO: Улучшения для обработки синтаксических ошибок:
+// 1. Добавить подсчет номеров строк и колонок (Line, Col) вместо только абсолютной позиции (Pos).
+// 2. Создать типизированную структуру domain.SyntaxError { Line, Col, Pos, Msg, Got } для удобной подсветки ошибок в TUI/CLI.
 func (p *Parser) syntaxError(msg string, got byte, pos int) error {
 	p.state = STATE_ERROR
-	return fmt.Errorf("ошибка на позиции %d: Syntax error: %s, got: %q", pos, msg, got)
+	return fmt.Errorf("syntax error at position %d: %s, got: %q", pos, msg, got)
 }
 
 func isDigit(ch byte) bool {
@@ -729,10 +865,13 @@ func (p *Parser) saveCurrentTask() {
 	}
 }
 
-func trimTrailingSpaces(s string) string {
-	i := len(s) - 1
-	for i >= 0 && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r') {
-		i--
+func trimSlice(src string, start, end int) string {
+	for start < end && (src[start] == ' ' || src[start] == '\t') {
+		start++
 	}
-	return s[:i+1]
+	for end > start && (src[end-1] == ' ' || src[end-1] == '\t' || src[end-1] == '\r') {
+		end--
+	}
+	return src[start:end]
 }
+

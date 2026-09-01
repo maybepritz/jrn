@@ -2,7 +2,7 @@ package storage
 
 import (
 	"context"
-	"jrn/internal/domain"
+	"jrn/pkg/domain"
 	"sort"
 	"sync"
 	"time"
@@ -147,3 +147,4 @@ func (m *Mock) Dates() []string {
 	sort.Strings(keys)
 	return keys
 }
+

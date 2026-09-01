@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"jrn/internal/domain"
+	"jrn/pkg/domain"
 	"reflect"
 	"testing"
 )
@@ -450,3 +450,66 @@ func TestParse_LargeStreak(t *testing.T) {
 	doc := mustParse(t, input)
 	assertMeta(t, doc, "2026-08-29", 365, 99)
 }
+
+// ─── Тесты: JSON Round-trip (SerializeJson → ParseJson) ────────────────────
+
+func TestJson_RoundTrip(t *testing.T) {
+	original := &domain.Document{
+		Meta: domain.Metadata{
+			Date:          "2026-08-28",
+			Streak:        14,
+			TaskCompleted: 3,
+		},
+		DailyLog: []string{
+			"Утро началось с кофе.",
+			"Работал над проектом весь день.",
+		},
+		Tasks: []domain.Task{
+			{
+				Done:       false,
+				Title:      "Пробежка",
+				Tags:       []string{"health", "habit"},
+				Attributes: []domain.Attribute{{Key: "prio", Value: "low"}},
+				Notes:      []string{},
+			},
+			{
+				Done:       true,
+				Title:      "Фикс бага",
+				Tags:       []string{"dev", "go"},
+				Attributes: []domain.Attribute{{Key: "prio", Value: "high"}, {Key: "due", Value: "2026-08-28"}},
+				Notes:      []string{"Переписал метод Save", "Добавил тесты"},
+			},
+			{
+				Done:       false,
+				Title:      "Купить продукты",
+				Tags:       []string{"home"},
+				Attributes: []domain.Attribute{},
+				Notes:      []string{"Молоко", "Хлеб"},
+			},
+		},
+	}
+
+	jsonBytes := SerializeJson(original)
+	parsed, err := ParseJson(jsonBytes)
+	if err != nil {
+		t.Fatalf("ParseJson вернул ошибку: %v\nJSON:\n%s", err, string(jsonBytes))
+	}
+
+	assertMeta(t, parsed, original.Meta.Date, original.Meta.Streak, original.Meta.TaskCompleted)
+
+	if len(parsed.DailyLog) != len(original.DailyLog) {
+		t.Fatalf("DailyLog len = %d, хотели %d", len(parsed.DailyLog), len(original.DailyLog))
+	}
+	for i, line := range original.DailyLog {
+		if parsed.DailyLog[i] != line {
+			t.Errorf("DailyLog[%d] = %q, хотели %q", i, parsed.DailyLog[i], line)
+		}
+	}
+
+	assertTaskCount(t, parsed, len(original.Tasks))
+	for i, task := range original.Tasks {
+		assertTask(t, parsed.Tasks[i], task.Done, task.Title, task.Tags, task.Attributes, task.Notes)
+	}
+}
+
+
