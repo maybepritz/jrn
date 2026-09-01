@@ -46,10 +46,8 @@ task_completed: 2
 ## Установка
 
 ```bash
-go get github.com/maybepritz/task-cli-go
+go get github.com/maybepritz/jrn
 ```
-
-*(Для локальной разработки укажите в `go.mod` вашего проекта: `replace jrn => ../task-cli-go`)*.
 
 ---
 
