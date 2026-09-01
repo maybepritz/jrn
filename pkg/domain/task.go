@@ -1,7 +1,9 @@
 package domain
 
 import (
+	"strconv"
 	"strings"
+	"time"
 )
 
 type TaskBuilder struct {
@@ -139,4 +141,91 @@ func (t *Task) AttrVal(key string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func (t *Task) ShouldRepeatOn(date time.Time) bool {
+	rule, found := t.AttrVal("repeat")
+	if !found {
+		return false
+	}
+
+	rule = strings.ToLower(strings.TrimSpace(rule))
+
+	//Ежедневно
+	if rule == "daily" {
+		return true
+	}
+
+	//По дням недели (например, "mon,wed,fri")
+	if strings.HasPrefix(rule, "weekly:") {
+		daysStr := strings.TrimPrefix(rule, "weekly:")
+		targetDay := shortWeekday(date.Weekday()) // "mon", "tue", etc.
+		for _, day := range strings.Split(daysStr, ",") {
+			if strings.TrimSpace(day) == targetDay {
+				return true
+			}
+		}
+		return false
+	}
+
+	//Чётные / Нечётные недели (числитель / знаменатель): biweekly:even:tue или biweekly:odd:mon
+	if strings.HasPrefix(rule, "biweekly:") {
+		parts := strings.Split(strings.TrimPrefix(rule, "biweekly:"), ":")
+		if len(parts) != 2 {
+			return false
+		}
+		parity, day := parts[0], parts[1] // "even"/"odd", "tue"
+
+		_, weekNum := date.ISOWeek()
+		isEvenWeek := weekNum%2 == 0
+
+		if (parity == "even" && !isEvenWeek) || (parity == "odd" && isEvenWeek) {
+			return false
+		}
+
+		return shortWeekday(date.Weekday()) == day
+	}
+
+	//Ежемесячно (например, "monthly:15" для 15-го числа каждого месяца)
+	if strings.HasPrefix(rule, "monthly:") {
+		dayStr := strings.TrimPrefix(rule, "monthly:")
+		dayNum, err := strconv.Atoi(dayStr)
+		if err != nil || dayNum < 1 || dayNum > 31 {
+			return false
+		}
+		return date.Day() == dayNum
+	}
+
+	return false
+}
+
+func (t *Task) Clone() Task {
+	return Task{
+		Done:       t.Done,
+		Title:      t.Title,
+		Tags:       append([]string(nil), t.Tags...),
+		Attributes: append([]Attribute(nil), t.Attributes...),
+		Notes:      append([]string(nil), t.Notes...),
+	}
+}
+
+func shortWeekday(wd time.Weekday) string {
+	switch wd {
+	case time.Monday:
+		return "mon"
+	case time.Tuesday:
+		return "tue"
+	case time.Wednesday:
+		return "wed"
+	case time.Thursday:
+		return "thu"
+	case time.Friday:
+		return "fri"
+	case time.Saturday:
+		return "sat"
+	case time.Sunday:
+		return "sun"
+	default:
+		return ""
+	}
 }

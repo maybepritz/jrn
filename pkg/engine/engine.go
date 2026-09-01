@@ -124,14 +124,19 @@ func (e *Engine) initNewDay(ctx context.Context, date time.Time) (*domain.Docume
 	}
 
 	for _, task := range prevDoc.Tasks {
+		// Rollover
 		if !task.Done {
-			doc.Tasks = append(doc.Tasks, domain.Task{
-				Done:       false,
-				Title:      task.Title,
-				Tags:       append([]string(nil), task.Tags...),
-				Attributes: append([]domain.Attribute(nil), task.Attributes...),
-				Notes:      append([]string(nil), task.Notes...),
-			})
+			newTask := task.Clone()
+			newTask.Done = false
+			doc.Tasks = append(doc.Tasks, newTask)
+			continue
+		}
+
+		// привычка
+		if task.ShouldRepeatOn(date) {
+			newTask := task.Clone()
+			newTask.Done = false
+			doc.Tasks = append(doc.Tasks, newTask)
 		}
 	}
 
